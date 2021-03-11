@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_map/plugin_api.dart';
 import 'package:latlong/latlong.dart';
+import 'package:synchronized/synchronized.dart';
 
 import 'move_marker_options.dart';
 import 'move_state.dart';
@@ -36,6 +37,8 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
       widget.markerOptions.moveMarkerController.state == MoveState.pausedState;
 
   final Distance _distance = Distance();
+
+  final Lock _stateLock = Lock();
 
   int _currentIndex;
   List<LatLng> _points;
@@ -106,7 +109,9 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
           oldWidget.markerOptions.duration.inMicroseconds;
       _durations = _durations.map((e) => e * ratio).toList();
     }
-    if (widget.markerOptions.moveMarkerController.state == MoveState.runState) {
+    if (widget.markerOptions.moveMarkerController.state ==
+        MoveState.notInitState) {
+      _updateState(MoveState.runState);
       _animate();
     }
   }
@@ -148,50 +153,70 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     }
   }
 
-  _start() {
+  _start() async {
     if (isRunning) {
       return;
     }
+    await _stateLock.synchronized(() async {
+      if (isRunning) {
+        return;
+      }
 
-    if (isPaused) {
-      _resume();
-    } else {
-      widget.markerOptions.moveMarkerController.state = MoveState.runState;
-      _callback(MoveState.runState);
-      _animate();
-    }
+      if (isPaused) {
+        _resume();
+      } else {
+        _updateState(MoveState.runState);
+        _animate();
+      }
+    });
   }
 
-  _stop() {
+  _stop() async {
     if (isEnded) {
       return;
     }
-
-    _currentIndex = 0;
-    _animationController.stop();
-    widget.markerOptions.moveMarkerController.state = MoveState.endedState;
-    _callback(MoveState.endedState);
+    await _stateLock.synchronized(() async {
+      if (isEnded) {
+        return;
+      }
+      _currentIndex = 0;
+      _updateState(MoveState.endedState);
+      _animationController.stop();
+    });
   }
 
-  _pause() {
+  _pause() async {
     if (!isRunning) {
       return;
     }
-    _animationController.stop(canceled: false);
-    widget.markerOptions.moveMarkerController.state = MoveState.pausedState;
-    _callback(MoveState.pausedState);
+    await _stateLock.synchronized(() async {
+      if (!isRunning) {
+        return;
+      }
+      _updateState(MoveState.pausedState);
+      _animationController.stop(canceled: false);
+    });
   }
 
   _resume() async {
     if (!isPaused) {
       return;
     }
+    await _stateLock.synchronized(() async {
+      if (!isPaused) {
+        return;
+      }
 
-    // Finish the previous animation first
-    await _animationController.forward();
-    widget.markerOptions.moveMarkerController.state = MoveState.runState;
-    _callback(MoveState.runState);
-    _animate();
+      _updateState(MoveState.runState);
+      // Finish the previous animation first
+      await _animationController.forward();
+      _animate();
+    });
+  }
+
+  _updateState(MoveState moveState) {
+    widget.markerOptions.moveMarkerController.state = moveState;
+    _callback(moveState);
   }
 
   _animate() async {
@@ -199,6 +224,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     if (_currentIndex == 0) {
       var latLng = _points[0];
       if (_latLng != latLng) {
+        _updateState(MoveState.notInitState);
         setState(() {
           _latLng = latLng;
         });
@@ -217,12 +243,17 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
       bool res = await _updateLatLng(nextLatLng);
       if (!res) {
         // Animation execution failure indicates that the pause loop has been terminated by other methods
-        break;
+        return;
       }
     }
-    _currentIndex = 0;
-    widget.markerOptions.moveMarkerController.state = MoveState.endedState;
-    _callback(MoveState.endedState);
+
+    if (_animationController.isCompleted) {
+      _currentIndex = 0;
+      var latLng = _points[0];
+      _latTween.end = latLng.latitude;
+      _lngTween.end = latLng.longitude;
+      _updateState(MoveState.endedState);
+    }
   }
 
   _callback(MoveState moveState, {LatLng latLng}) {
@@ -234,8 +265,12 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     }
   }
 
-  _moveTo(LatLng point) {
+  _moveTo(LatLng point) async {
     // todo
+    await _stateLock.synchronized(() async {
+      await _updateLatLng(point);
+      _updateState(MoveState.endedState);
+    });
   }
 
   Future<bool> _updateLatLng(LatLng latLng) async {
@@ -248,8 +283,8 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
         return false;
       }
       _animationController.reset();
+      _callback(MoveState.runningState, latLng: latLng);
       await _animationController.forward(from: 0.0);
-      _callback(MoveState.runState, latLng: latLng);
       return true;
     } catch (e) {
       print(e);
