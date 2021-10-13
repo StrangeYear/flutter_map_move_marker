@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_map/plugin_api.dart';
@@ -45,6 +46,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
   List<Duration> _durations;
 
   LatLng _latLng;
+  double _mileage = 0;
 
   AnimationController _animationController;
   Tween<double> _latTween;
@@ -71,7 +73,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
                 _latTween.evaluate(_animation), _lngTween.evaluate(_animation));
             // If the next coordinate is not in the map, modify the center of the map
             if (widget.markerOptions.moveCenter &&
-                !_boundsContainsMarker(widget.markerOptions.marker, latLng)) {
+                !_boundsContainsMarker(latLng)) {
               widget.mapState.move(latLng, widget.mapState.zoom ?? 18.0);
             }
             setState(() {
@@ -97,6 +99,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
   @override
   void dispose() {
     _animationController.dispose();
+    widget.markerOptions.moveMarkerController.streamController.close();
     super.dispose();
   }
 
@@ -165,6 +168,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
       if (isPaused) {
         _resume();
       } else {
+        _mileage = 0;
         _updateState(MoveState.runState);
         _animate();
       }
@@ -182,6 +186,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
       _currentIndex = 0;
       _updateState(MoveState.endedState);
       _animationController.stop();
+      _mileage = 0;
     });
   }
 
@@ -278,6 +283,10 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     _lngTween.begin = _lngTween.end;
     _latTween.end = latLng.latitude;
     _lngTween.end = latLng.longitude;
+
+    // 计算里程 current += (latLng - _latLng)
+    var mileage = _getDistance(_latLng, latLng);
+
     try {
       if (!isRunning) {
         return false;
@@ -285,6 +294,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
       _animationController.reset();
       _callback(MoveState.runningState, latLng: latLng);
       await _animationController.forward(from: 0.0);
+      _mileage += mileage;
       return true;
     } catch (e) {
       print(e);
@@ -293,24 +303,20 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
   }
 
   CustomPoint _parseLatLng(LatLng latLng) {
+    var marker = _getMarker();
     var pos = widget.mapState.project(latLng);
     pos = pos.multiplyBy(widget.mapState
             .getZoomScale(widget.mapState.zoom, widget.mapState.zoom)) -
         widget.mapState.getPixelOrigin();
 
-    var pixelPosX = (pos.x -
-            (widget.markerOptions.marker.width -
-                widget.markerOptions.marker.anchor.left))
-        .toDouble();
-    var pixelPosY = (pos.y -
-            (widget.markerOptions.marker.height -
-                widget.markerOptions.marker.anchor.top))
-        .toDouble();
+    var pixelPosX = (pos.x - (marker.width - marker.anchor.left)).toDouble();
+    var pixelPosY = (pos.y - (marker.height - marker.anchor.top)).toDouble();
 
     return CustomPoint(pixelPosX, pixelPosY);
   }
 
-  bool _boundsContainsMarker(Marker marker, LatLng latLng) {
+  bool _boundsContainsMarker(LatLng latLng) {
+    var marker = _getMarker();
     var pixelPoint = widget.mapState.project(latLng);
 
     final width = marker.width - marker.anchor.left;
@@ -321,15 +327,40 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     return widget.mapState.pixelBounds.containsPartialBounds(Bounds(sw, ne));
   }
 
-  Widget _build() {
+  Marker _getMarker() {
+    return widget.markerOptions.marker != null
+        ? widget.markerOptions.marker
+        : widget.markerOptions.markerBuilder(_currentIndex);
+  }
+
+  List<Widget> _build() {
     var customPoint = _parseLatLng(_latLng);
-    return Positioned(
-      width: widget.markerOptions.marker.width,
-      height: widget.markerOptions.marker.height,
-      left: customPoint.x,
-      top: customPoint.y,
-      child: widget.markerOptions.marker.builder(context),
-    );
+    var marker = _getMarker();
+    return [
+      Positioned(
+        width: marker.width,
+        height: marker.height,
+        left: customPoint.x,
+        top: customPoint.y,
+        child: marker.builder(context),
+      ),
+      if (widget.markerOptions.popup != null)
+        // 构建popup 带上坐标和里程
+        Positioned(
+          width: widget.markerOptions.popup.width,
+          height: widget.markerOptions.popup.height,
+          left: customPoint.x + marker.width,
+          top: customPoint.y -
+              widget.markerOptions.popup.height +
+              marker.height / 2,
+          child: widget.markerOptions.popup.popupBuilder(
+            context,
+            latLng: _points[_currentIndex],
+            mileage: _mileage,
+            index: _currentIndex,
+          ),
+        ),
+    ];
   }
 
   @override
@@ -340,11 +371,28 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
         return _points.isNotEmpty
             ? Container(
                 child: Stack(
-                  children: [_build()],
+                  children: _build(),
                 ),
               )
             : Container();
       },
     );
   }
+}
+
+double _getDistance(LatLng latLng1, LatLng latLng2) {
+  /// 单位：米
+  double def = 6378137.0;
+  double radLat1 = _rad(latLng1.latitude);
+  double radLat2 = _rad(latLng2.latitude);
+  double a = radLat1 - radLat2;
+  double b = _rad(latLng1.longitude) - _rad(latLng2.longitude);
+  double s = 2 *
+      asin(sqrt(pow(sin(a / 2), 2) +
+          cos(radLat1) * cos(radLat2) * pow(sin(b / 2), 2)));
+  return (s * def).roundToDouble();
+}
+
+double _rad(double d) {
+  return d * pi / 180.0;
 }
