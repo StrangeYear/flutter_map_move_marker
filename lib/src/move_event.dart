@@ -1,7 +1,7 @@
-import 'package:latlong/latlong.dart';
+import 'package:latlong2/latlong.dart';
 
 class MoveEvent {
-  final LatLng point;
+  final LatLng? point;
   final MoveEventAction action;
 
   MoveEvent.start()
@@ -20,7 +20,9 @@ class MoveEvent {
       : this.point = null,
         this.action = MoveEventAction.resume;
 
-  MoveEvent.moveTo(this.point) : this.action = MoveEventAction.moveTo;
+  MoveEvent.moveTo(this.point)
+      : this.action = MoveEventAction.moveTo,
+        assert(point != null);
 }
 
 enum MoveEventAction {

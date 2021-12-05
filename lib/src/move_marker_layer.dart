@@ -3,7 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_map/plugin_api.dart';
-import 'package:latlong/latlong.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:synchronized/synchronized.dart';
 
 import 'move_marker_options.dart';
@@ -15,7 +15,7 @@ class MoveMarkerLayer extends StatefulWidget {
   final MapState mapState;
   final Stream<Null> stream;
 
-  MoveMarkerLayer(this.markerOptions, this.mapState, this.stream, {Key key})
+  MoveMarkerLayer(this.markerOptions, this.mapState, this.stream, {Key? key})
       : super(key: key);
 
   @override
@@ -41,17 +41,17 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
 
   final Lock _stateLock = Lock();
 
-  int _currentIndex;
-  List<LatLng> _points;
-  List<Duration> _durations;
+  late int _currentIndex;
+  late List<LatLng> _points;
+  late List<Duration> _durations;
 
-  LatLng _latLng;
+  late LatLng _latLng;
   double _mileage = 0;
 
-  AnimationController _animationController;
-  Tween<double> _latTween;
-  Tween<double> _lngTween;
-  Animation<double> _animation;
+  late AnimationController _animationController;
+  late Tween<double> _latTween;
+  late Tween<double> _lngTween;
+  late Animation<double> _animation;
 
   @override
   void initState() {
@@ -64,22 +64,21 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     widget.markerOptions.moveMarkerController.streamController.stream
         .listen((event) => _handleAction(event));
 
-    _animationController =
-        AnimationController(duration: Duration(seconds: 5), vsync: this)
-          ..addListener(() {
-            // Get the latest longitude and latitude update interface
-            // of the current animation value every time the animation is modified
-            var latLng = LatLng(
-                _latTween.evaluate(_animation), _lngTween.evaluate(_animation));
-            // If the next coordinate is not in the map, modify the center of the map
-            if (widget.markerOptions.moveCenter &&
-                !_boundsContainsMarker(latLng)) {
-              widget.mapState.move(latLng, widget.mapState.zoom ?? 18.0);
-            }
-            setState(() {
-              _latLng = latLng;
-            });
-          });
+    _animationController = AnimationController(
+        duration: Duration(seconds: 5), vsync: this)
+      ..addListener(() {
+        // Get the latest longitude and latitude update interface
+        // of the current animation value every time the animation is modified
+        var latLng = LatLng(
+            _latTween.evaluate(_animation), _lngTween.evaluate(_animation));
+        // If the next coordinate is not in the map, modify the center of the map
+        if (widget.markerOptions.moveCenter && !_boundsContainsMarker(latLng)) {
+          widget.mapState.move(latLng, widget.mapState.zoom, source: MapEventSource.mapController);
+        }
+        setState(() {
+          _latLng = latLng;
+        });
+      });
 
     // Set up linear animation
     _animation =
@@ -87,13 +86,11 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
 
     _filterPoints();
 
-    if (_points.isNotEmpty) {
-      // 设置当前marker坐标为第一个point
-      _latLng = _points[0];
-      _latTween = Tween(end: _latLng.latitude)..animate(_animation);
-      _lngTween = Tween(end: _latLng.longitude)..animate(_animation);
-      setState(() {});
-    }
+    // 设置当前marker坐标为第一个point
+    _latLng = _points[0];
+    _latTween = Tween(end: _latLng.latitude)..animate(_animation);
+    _lngTween = Tween(end: _latLng.longitude)..animate(_animation);
+    setState(() {});
   }
 
   @override
@@ -152,7 +149,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
       case MoveEventAction.resume:
         return _resume();
       case MoveEventAction.moveTo:
-        return _moveTo(event.point);
+        return _moveTo(event.point!);
     }
   }
 
@@ -225,8 +222,9 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
   }
 
   _animate() async {
-    // If it starts from first point, move the marker to first point
-    if (_currentIndex == 0) {
+    // If it starts from first point or last point, move the marker to first point
+    if (_currentIndex == 0 || _currentIndex == _points.length - 1) {
+      if (_currentIndex != 0) _currentIndex = 0;
       var latLng = _points[0];
       if (_latLng != latLng) {
         _updateState(MoveState.notInitState);
@@ -253,7 +251,6 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     }
 
     if (_animationController.isCompleted) {
-      _currentIndex = 0;
       var latLng = _points[0];
       _latTween.end = latLng.latitude;
       _lngTween.end = latLng.longitude;
@@ -261,9 +258,9 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     }
   }
 
-  _callback(MoveState moveState, {LatLng latLng}) {
+  _callback(MoveState moveState, {LatLng? latLng}) {
     if (widget.markerOptions.moveCallBack != null) {
-      widget.markerOptions.moveCallBack(
+      widget.markerOptions.moveCallBack!(
         moveState,
         latLng: latLng,
       );
@@ -302,7 +299,7 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
     }
   }
 
-  CustomPoint _parseLatLng(LatLng latLng) {
+  CustomPoint<double> _parseLatLng(LatLng latLng) {
     var marker = _getMarker();
     var pos = widget.mapState.project(latLng);
     pos = pos.multiplyBy(widget.mapState
@@ -329,8 +326,8 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
 
   Marker _getMarker() {
     return widget.markerOptions.marker != null
-        ? widget.markerOptions.marker
-        : widget.markerOptions.markerBuilder(_currentIndex);
+        ? widget.markerOptions.marker!
+        : widget.markerOptions.markerBuilder!(_currentIndex);
   }
 
   List<Widget> _build() {
@@ -347,13 +344,13 @@ class _MoveMarkerLayerState extends State<MoveMarkerLayer>
       if (widget.markerOptions.popup != null)
         // 构建popup 带上坐标和里程
         Positioned(
-          width: widget.markerOptions.popup.width,
-          height: widget.markerOptions.popup.height,
+          width: widget.markerOptions.popup!.width,
+          height: widget.markerOptions.popup!.height,
           left: customPoint.x + marker.width,
           top: customPoint.y -
-              widget.markerOptions.popup.height +
+              widget.markerOptions.popup!.height +
               marker.height / 2,
-          child: widget.markerOptions.popup.popupBuilder(
+          child: widget.markerOptions.popup!.popupBuilder(
             context,
             latLng: _points[_currentIndex],
             mileage: _mileage,

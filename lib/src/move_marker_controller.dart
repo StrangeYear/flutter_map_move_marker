@@ -1,31 +1,32 @@
 import 'dart:async';
 
+import 'package:latlong2/latlong.dart';
+
 import 'move_event.dart';
 import 'move_state.dart';
-import 'package:latlong/latlong.dart';
 
 class MoveMarkerController {
-  StreamController<MoveEvent> streamController;
+  late StreamController<MoveEvent> streamController;
 
-  MoveState state;
+  MoveState? state;
 
   void start() {
-    streamController?.add(MoveEvent.start());
+    streamController.add(MoveEvent.start());
   }
 
   void stop() {
-    streamController?.add(MoveEvent.stop());
+    streamController.add(MoveEvent.stop());
   }
 
   void pause() {
-    streamController?.add(MoveEvent.pause());
+    streamController.add(MoveEvent.pause());
   }
 
   void resume() {
-    streamController?.add(MoveEvent.resume());
+    streamController.add(MoveEvent.resume());
   }
 
   void moveTo(LatLng point) {
-    streamController?.add(MoveEvent.moveTo(point));
+    streamController.add(MoveEvent.moveTo(point));
   }
 }

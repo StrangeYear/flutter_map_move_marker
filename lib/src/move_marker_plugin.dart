@@ -9,7 +9,7 @@ class MoveMarkerPlugin extends MapPlugin {
   @override
   Widget createLayer(
       LayerOptions options, MapState mapState, Stream<Null> stream) {
-    return MoveMarkerLayer(options, mapState, stream);
+    return MoveMarkerLayer(options as MoveMarkerOptions, mapState, stream);
   }
 
   @override
